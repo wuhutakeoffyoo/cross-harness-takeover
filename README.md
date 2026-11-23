@@ -56,6 +56,7 @@ git clone https://github.com/wuhutakeoffyoo/cross-harness-takeover ~/.dsh/skills
 |---|---|
 | 枚举所有 harness 历史会话（统一本地时间排序） | `python -I scripts/takeover.py list --limit 15` |
 | 关键词 + 时间范围检索 | `python -I scripts/takeover.py list --query 关键词 --since 7d` |
+| 正文内容检索（codex/claude/antigravity/dsh 原文） | `python -I scripts/takeover.py list --query 关键词 --content` |
 | 自动识别 harness 生成接管摘要（支持前缀 ID） | `python -I scripts/takeover.py show --id <完整id或前8位>` |
 | 深挖模式（更长正文 + 最后 3 条助手回复） | `python -I scripts/takeover.py show --id <id> --full` |
 | JSON 输出（便于脚本二次处理） | `python -I scripts/takeover.py show --id <id> --json` |

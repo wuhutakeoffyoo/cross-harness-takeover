@@ -4,7 +4,7 @@ description: "Cross-harness AI coding session takeover and context handoff (跨 
 compatibility: Python 3.8+ (stdlib only, zero third-party dependencies). Supports Windows, macOS, and Linux.
 metadata:
   author: wuhutakeoffyoo
-  version: "2.2"
+  version: "2.3"
 ---
 
 # cross-harness-takeover — 跨 harness 会话接管
@@ -30,6 +30,9 @@ metadata:
    ```bash
    # 枚举（全 harness 混合，统一换算为本地时间排序；支持 --query 与 --since）
    python -I <skill目录>/scripts/takeover.py list --query <关键词> --since 30d --limit 15
+
+   # 正文检索（在标题/ID 之外追加搜 codex/claude/antigravity/dsh 会话原文，较慢）
+   python -I <skill目录>/scripts/takeover.py list --query <关键词> --content
 
    # 按 ID 接管（默认 --harness auto 自动识别，支持完整 ID 或唯一前缀如前 8 位）
    python -I <skill目录>/scripts/takeover.py show --id <会话id或前缀>

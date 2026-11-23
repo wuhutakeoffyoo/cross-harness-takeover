@@ -3,7 +3,7 @@
 """takeover.py — 跨 harness 历史会话发现与接管摘要(严格只读,纯 Python 标准库)
 
 子命令:
-  list    [--query 关键词] [--harness auto|all|zcode|codex|antigravity|claude|opencode|windsurf]
+  list    [--query 关键词] [--content] [--harness auto|all|zcode|codex|antigravity|claude|opencode|windsurf]
           [--since 7d|2026-11-01] [--limit N] [--json]
   show    --id ID [--harness auto|zcode|codex|antigravity|claude|opencode]
           [--max-chars 300] [--tail-chars 1500] [--last-n 1] [--full] [--json]
@@ -181,6 +181,40 @@ def _positive_int(val: str) -> int:
     return n
 
 
+def _file_contains(path: Path, needle: str, cap: int = 16 * 1024 * 1024) -> bool:
+    """分块读取文件做不区分大小写的子串判断(--content 检索用),严格只读。"""
+    try:
+        if path.stat().st_size > cap:
+            return False
+        with path.open("r", encoding="utf-8", errors="ignore") as fh:
+            tail = ""
+            nl = needle.lower()
+            while True:
+                chunk = fh.read(1 << 20)
+                if not chunk:
+                    return False
+                if nl in (tail + chunk).lower():
+                    return True
+                tail = chunk[-4096:]
+    except OSError:
+        return False
+
+
+def _peek_jsonl_lines(path: Path, max_lines: int = 80):
+    """逐行 yield 前 max_lines 行中可解析的 JSON 对象。"""
+    try:
+        with path.open(encoding="utf-8", errors="replace") as fh:
+            for i, line in enumerate(fh):
+                if i >= max_lines:
+                    break
+                try:
+                    yield json.loads(line)
+                except Exception:
+                    continue
+    except OSError:
+        return
+
+
 # ---------- ZCode (~/.zcode) ----------
 
 def zcode_db() -> Path:
@@ -334,16 +368,37 @@ def codex_list(query: str, limit: int) -> List[dict]:
     for f in files:
         m = re.search(r"([0-9a-fA-F]{8}-[0-9a-fA-F-]{27,})\.jsonl$", f.name)
         sid = m.group(1) if m else f.stem
+        cwd, title = _codex_peek_meta(f)
         ts, upd_str = parse_ts(f.stat().st_mtime)
-        if ql and ql not in f"{sid} {f.name}".lower():
+        if ql and ql not in f"{sid} {f.name} {title} {cwd}".lower():
             continue
         out.append({
-            "harness": "codex", "id": sid, "title": "(无索引标题)",
-            "updated": upd_str, "cwd": "", "_ts": ts,
+            "harness": "codex", "id": sid, "title": title or "(无标题)",
+            "updated": upd_str, "cwd": cwd, "_ts": ts,
         })
         if len(out) >= limit:
             break
     return out
+
+
+def _codex_peek_meta(path: Path) -> Tuple[str, str]:
+    """无 session_index 时,快速读取 rollout 文件头获取 (cwd, 首条真实用户输入标题)。"""
+    cwd, title = "", ""
+    for o in _peek_jsonl_lines(path):
+        t = o.get("type")
+        p = o.get("payload") or {}
+        if t == "session_meta" and not cwd:
+            cwd = str(p.get("cwd") or "")
+        elif t == "response_item" and p.get("type") == "message" and p.get("role") == "user" and not title:
+            txt = "\n".join(
+                c.get("text", "") for c in p.get("content", [])
+                if isinstance(c, dict) and c.get("type") == "input_text"
+            ).strip()
+            if txt and not looks_like_wrapper(txt) and not is_noise(txt):
+                title = trunc(txt, 60)
+        if cwd and title:
+            break
+    return cwd, title
 
 
 def codex_find_file(sid: str) -> Optional[Path]:
@@ -464,6 +519,16 @@ def _parse_antigravity_transcript(path: Path) -> Tuple[List[Tuple[str, str, str]
     return convo, created
 
 
+def _antigravity_peek_title(tp: Path) -> str:
+    """无 summary db 时,从 transcript 头部取首条真实 USER_REQUEST 当标题。"""
+    for o in _peek_jsonl_lines(tp):
+        if o.get("type") == "USER_INPUT":
+            txt = strip_antigravity_user_request(o.get("content") or "")
+            if txt and not looks_like_wrapper(txt) and not is_noise(txt):
+                return trunc(txt, 60)
+    return ""
+
+
 def antigravity_list(query: str, limit: int) -> List[dict]:
     ah = antigravity_home()
     dbf = ah / "conversation_summaries.db"
@@ -499,12 +564,13 @@ def antigravity_list(query: str, limit: int) -> List[dict]:
         if tp:
             cands.append((tp.stat().st_mtime, d.name, tp))
     cands.sort(key=lambda x: x[0], reverse=True)
-    for mtime, cid, _ in cands:
-        if ql and ql not in cid.lower():
+    for mtime, cid, tp in cands:
+        title = _antigravity_peek_title(tp)
+        if ql and ql not in f"{cid} {title}".lower():
             continue
         ts, upd_str = parse_ts(mtime)
         out.append({
-            "harness": "antigravity", "id": cid, "title": "(transcript)",
+            "harness": "antigravity", "id": cid, "title": title or "(transcript)",
             "updated": upd_str, "cwd": "", "_ts": ts,
         })
         if len(out) >= limit:
@@ -1108,6 +1174,67 @@ def windsurf_list(query: str, limit: int) -> List[dict]:
     return out
 
 
+# ---------- --content 正文检索(文件型 harness 兜底,zcode 已走 input_history) ----------
+
+def content_search(query: str, limit: int) -> List[dict]:
+    """对 codex/claude/antigravity/dsh 的会话原文文件做不区分大小写子串检索。"""
+    if not query:
+        return []
+    out = []
+
+    pdir = claude_home() / "projects"
+    if pdir.exists():
+        for f in sorted(pdir.rglob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True):
+            if f.name.startswith("agent-") or not _file_contains(f, query):
+                continue
+            cwd, title, sid = _claude_peek_meta(f)
+            ts, upd_str = parse_ts(f.stat().st_mtime)
+            out.append({"harness": "claude", "id": sid, "title": title,
+                        "updated": upd_str, "cwd": cwd, "_ts": ts})
+
+    for rname in ("sessions", "archived_sessions"):
+        rdir = codex_home() / rname
+        if not rdir.exists():
+            continue
+        it = rdir.rglob("rollout-*.jsonl") if rname == "sessions" else rdir.glob("rollout-*.jsonl")
+        for f in sorted(it, key=lambda p: p.stat().st_mtime, reverse=True):
+            if not _file_contains(f, query):
+                continue
+            m = re.search(r"([0-9a-fA-F]{8}-[0-9a-fA-F-]{27,})\.jsonl$", f.name)
+            sid = m.group(1) if m else f.stem
+            cwd, title = _codex_peek_meta(f)
+            ts, upd_str = parse_ts(f.stat().st_mtime)
+            out.append({"harness": "codex", "id": sid, "title": title or "(无标题)",
+                        "updated": upd_str, "cwd": cwd, "_ts": ts})
+
+    brain = antigravity_home() / "brain"
+    if brain.exists():
+        for d in brain.iterdir():
+            if not d.is_dir():
+                continue
+            tp = _antigravity_transcript_path(d.name)
+            if tp and _file_contains(tp, query):
+                ts, upd_str = parse_ts(tp.stat().st_mtime)
+                out.append({"harness": "antigravity", "id": d.name,
+                            "title": _antigravity_peek_title(tp) or "(transcript)",
+                            "updated": upd_str, "cwd": "", "_ts": ts})
+
+    sdir = dsh_home() / "sessions"
+    if sdir.exists():
+        for f in sorted(sdir.rglob("session*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True):
+            if not f.is_file() or not _file_contains(f, query):
+                continue
+            sid = f.parent.name if f.parent.name.startswith("session-") else f.stem
+            ts, upd_str = parse_ts(f.stat().st_mtime)
+            pc = dsh_home() / "storages" / "session_projcache" / "sessions" / f"{sid}.json"
+            title = _dsh_projcache_info(pc)["title"] if pc.exists() else ""
+            out.append({"harness": "dsh", "id": sid, "title": title or "(无标题)",
+                        "updated": upd_str, "cwd": "", "_ts": ts})
+
+    out.sort(key=lambda r: r["_ts"], reverse=True)
+    return out[:limit]
+
+
 # ---------- Adapter 注册表 (扩展新 harness 只需在此注册) ----------
 
 LIST_ADAPTERS = {
@@ -1166,7 +1293,7 @@ def render_digest(found, last_n: int = 1) -> Optional[str]:
     if found is None:
         return None
     meta, convo, max_chars, tail_chars = found
-    script_hint = f"python -I {Path(__file__).name}"
+    script_hint = f'python -I "{Path(__file__).resolve()}"'
     L = []
     L.append(f"# 会话接管摘要 — {meta['title']}")
     L.append("")
@@ -1302,6 +1429,8 @@ def main(argv=None) -> int:
 
     lp = sub.add_parser("list", help="枚举/检索历史会话")
     lp.add_argument("--query", default="", help="匹配标题/目录/ID/历史输入")
+    lp.add_argument("--content", action="store_true",
+                    help="追加对 codex/claude/antigravity/dsh 会话正文的子串检索(较慢,需配合 --query)")
     lp.add_argument("--harness", default="all", choices=["all"] + list(LIST_ADAPTERS.keys()))
     lp.add_argument("--since", default="", help="仅显示该时间之后的会话(如 7d, 24h, 2026-11-01)")
     lp.add_argument("--limit", type=_positive_int, default=15)
@@ -1347,6 +1476,15 @@ def main(argv=None) -> int:
                 res.extend(items)
             except Exception as e:
                 res.append({"harness": h, "error": str(e), "_ts": -1.0})
+        if args.content and args.query:
+            seen = {(r.get("harness"), r.get("id")) for r in res}
+            try:
+                extra = content_search(args.query, fetch_limit)
+                if since_ts is not None:
+                    extra = [it for it in extra if it.get("_ts", 0.0) >= since_ts]
+                res.extend(it for it in extra if (it["harness"], it["id"]) not in seen)
+            except Exception as e:
+                res.append({"harness": "content", "error": str(e), "_ts": -1.0})
         res.sort(key=lambda r: r.get("_ts", 0.0), reverse=True)
         res = res[: args.limit]
         clean_res = [{k: v for k, v in r.items() if k != "_ts"} for r in res]
