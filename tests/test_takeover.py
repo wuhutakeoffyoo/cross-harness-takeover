@@ -274,6 +274,44 @@ class TakeoverTestCase(unittest.TestCase):
         self.assertTrue(any("这是一段可读中文测试" in s for s in got))
         self.assertFalse(any("CREATE TABLE" in s for s in got))
 
+    def test_content_search_finds_body_text(self):
+        self._seed_codex()
+        self._seed_claude()
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = takeover.main(["list", "--query", "argparse", "--content", "--json"])
+        self.assertEqual(rc, 0)
+        items = json.loads(buf.getvalue())
+        self.assertTrue(any(
+            it["harness"] == "codex" and it["id"] == "11111111-2222-3333-4444-555555555555"
+            for it in items
+        ), msg=items)
+        # 不开启 --content 时,正文关键词搜不到 codex 会话(标题不含该词)
+        buf2 = io.StringIO()
+        with redirect_stdout(buf2):
+            takeover.main(["list", "--query", "argparse", "--json"])
+        items2 = json.loads(buf2.getvalue())
+        self.assertFalse(any(it["harness"] == "codex" for it in items2))
+
+    def test_codex_fallback_peek_title(self):
+        # 无 session_index.jsonl 时,list 回退应从 rollout 头部取标题与 cwd
+        ch = self.base / ".codex" / "sessions" / "2026" / "11" / "20"
+        ch.mkdir(parents=True, exist_ok=True)
+        cid = "99999999-8888-7777-6666-555555555555"
+        lines = [
+            {"type": "session_meta", "payload": {"id": cid, "cwd": "/proj/peek"}},
+            {"type": "response_item", "payload": {"type": "message", "role": "user",
+                "content": [{"type": "input_text", "text": "检查回退标题"}]}},
+        ]
+        (ch / f"rollout-2026-11-20T00-30-00-{cid}.jsonl").write_text(
+            "\n".join(json.dumps(x, ensure_ascii=False) for x in lines) + "\n",
+            encoding="utf-8",
+        )
+        items = takeover.codex_list("", 10)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["title"], "检查回退标题")
+        self.assertEqual(items[0]["cwd"], "/proj/peek")
+
     def test_parse_ts_and_since(self):
         ts_iso, s_iso = takeover.parse_ts("2026-11-20T01:00:00Z")
         self.assertGreater(ts_iso, 0)
