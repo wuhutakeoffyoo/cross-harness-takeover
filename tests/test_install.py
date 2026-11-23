@@ -1,7 +1,9 @@
+import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -11,10 +13,19 @@ import install  # noqa: E402
 class InstallTestCase(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory(prefix="install_test_")
-        self.home = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+        self.home = Path(self._tmp.name).resolve()
+        config_roots = patch.dict(os.environ, {
+            "APPDATA": str(self.home / "AppData" / "Roaming"),
+            "XDG_CONFIG_HOME": str(self.home / ".config"),
+        })
+        config_roots.start()
+        self.addCleanup(config_roots.stop)
 
-    def tearDown(self):
-        self._tmp.cleanup()
+        # Fail before any install/uninstall if a destination escapes the fixture.
+        for target in install.get_targets(self.home):
+            dest = target["dest"].resolve()
+            self.assertIn(self.home, dest.parents, f"Unsafe test destination: {dest}")
 
     def test_auto_detect_only_installs_present_harnesses(self):
         (self.home / ".codex").mkdir()
