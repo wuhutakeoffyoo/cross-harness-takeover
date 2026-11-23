@@ -72,7 +72,7 @@ metadata:
 
 ## 同步到本机所有 Harness
 
-当用户希望让本机其他已安装的 harness（ZCode / Codex / Antigravity / Claude Code / OpenCode / DSH / Cursor / Windsurf）也能自动发现并主动调用本 skill 时，运行：
+当用户希望让本机其他已安装的 harness（ZCode / Codex / Antigravity / Claude Code / OpenCode / DSH / Cursor / Windsurf / Devin）也能自动发现并主动调用本 skill 时，运行：
 
 ```bash
 python -I <skill目录>/scripts/install.py          # 自动探测本机已装 harness 并同步

@@ -21,7 +21,7 @@ npx skills add https://github.com/wuhutakeoffyoo/cross-harness-takeover
 ```bash
 git clone https://github.com/wuhutakeoffyoo/cross-harness-takeover
 python -I cross-harness-takeover/scripts/install.py          # 自动探测并同步到本机所有已装 harness
-# 或强制装到全部标准目录（~/.agents/skills、~/.gemini/config/skills、~/.claude/skills、~/.dsh/skills、~/.codeium/windsurf/skills）:
+# 或强制装到全部标准目录（~/.agents/skills、~/.gemini/config/skills、~/.claude/skills、~/.dsh/skills、~/.codeium/windsurf/skills、%APPDATA%/devin/skills 或 ~/.config/devin/skills）:
 python -I cross-harness-takeover/scripts/install.py --all
 ```
 

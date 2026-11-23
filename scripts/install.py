@@ -33,6 +33,15 @@ def skill_source_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def _devin_config_dir(home: Path) -> Path:
+    """Devin 全局配置目录: Windows %APPDATA%\\devin, macOS Application Support, Linux XDG。"""
+    if os.name == "nt":
+        return Path(os.environ.get("APPDATA", str(home / "AppData" / "Roaming"))) / "devin"
+    if sys.platform == "darwin":
+        return home / "Library" / "Application Support" / "devin"
+    return Path(os.environ.get("XDG_CONFIG_HOME", str(home / ".config"))) / "devin"
+
+
 def get_targets(home: Path) -> List[Dict[str, object]]:
     """返回所有标准 harness skill 发现目录及其探测条件。"""
     return [
@@ -80,6 +89,16 @@ def get_targets(home: Path) -> List[Dict[str, object]]:
             "dest": home / ".codeium" / "windsurf" / "skills" / SKILL_NAME,
             "probes": [
                 home / ".codeium" / "windsurf",
+            ],
+        },
+        {
+            "key": "devin",
+            "harnesses": "Devin CLI / Desktop",
+            "dest": _devin_config_dir(home) / "skills" / SKILL_NAME,
+            "probes": [
+                home / "AppData" / "Roaming" / "devin",
+                home / ".config" / "devin",
+                home / "AppData" / "Local" / "Programs" / "Devin",
             ],
         },
     ]
@@ -179,14 +198,14 @@ def main(argv=None) -> int:
     out_utf8()
     ap = argparse.ArgumentParser(description="将 cross-harness-takeover 同步到本机所有 harness")
     ap.add_argument("--all", action="store_true", help="安装到全部标准 skill 目录,不跳过未检测到的 harness")
-    ap.add_argument("--targets", default="", help="仅操作指定目标,逗号分隔: agents,antigravity,claude,dsh,windsurf")
+    ap.add_argument("--targets", default="", help="仅操作指定目标,逗号分隔: agents,antigravity,claude,dsh,windsurf,devin")
     ap.add_argument("--dry-run", action="store_true", help="仅预览操作,不修改文件系统")
     ap.add_argument("--uninstall", action="store_true", help="从已安装目录卸载(不会删除当前源码目录)")
     ap.add_argument("--json", action="store_true", help="以 JSON 格式输出结果")
     args = ap.parse_args(argv)
 
     target_keys = [x.strip() for x in args.targets.split(",") if x.strip()] if args.targets else None
-    valid_keys = {"agents", "antigravity", "claude", "dsh", "windsurf"}
+    valid_keys = {"agents", "antigravity", "claude", "dsh", "windsurf", "devin"}
     if target_keys:
         unknown = set(target_keys) - valid_keys
         if unknown:

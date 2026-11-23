@@ -27,6 +27,7 @@ class InstallTestCase(unittest.TestCase):
         self.assertEqual(by_key["dsh"], "installed")
         self.assertEqual(by_key["claude"], "skip")
         self.assertEqual(by_key["windsurf"], "skip")
+        self.assertEqual(by_key["devin"], "skip")
         self.assertTrue((self.home / ".dsh" / "skills" / install.SKILL_NAME / "SKILL.md").exists())
         self.assertTrue((self.home / ".agents" / "skills" / install.SKILL_NAME / "SKILL.md").exists())
         self.assertTrue((self.home / ".gemini" / "config" / "skills" / install.SKILL_NAME / "scripts" / "takeover.py").exists())
